@@ -1,28 +1,42 @@
+import { db } from '../db';
+import { ordersTable, driverBidsTable } from '../db/schema';
 import { type DriverBid } from '../schema';
+import { eq, asc } from 'drizzle-orm';
 
 export async function getOrderBids(orderId: number): Promise<DriverBid[]> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is to get all bids for a specific order:
-    // - Validate order exists and is in pending status
-    // - Get all driver bids with driver information
-    // - Sort by bid amount or estimated arrival time
-    // - Used by passengers to choose the best bid
-    return Promise.resolve([
-        {
-            id: 1,
-            order_id: orderId,
-            driver_id: 1,
-            bid_amount: 23000,
-            estimated_arrival_minutes: 5,
-            created_at: new Date()
-        },
-        {
-            id: 2,
-            order_id: orderId,
-            driver_id: 2,
-            bid_amount: 25000,
-            estimated_arrival_minutes: 3,
-            created_at: new Date()
-        }
-    ] as DriverBid[]);
+  try {
+    // First validate that the order exists and is in pending status
+    const orderExists = await db.select()
+      .from(ordersTable)
+      .where(eq(ordersTable.id, orderId))
+      .execute();
+
+    if (orderExists.length === 0) {
+      throw new Error(`Order with id ${orderId} not found`);
+    }
+
+    const order = orderExists[0];
+    if (order.status !== 'pending') {
+      throw new Error(`Order with id ${orderId} is not in pending status`);
+    }
+
+    // Get all driver bids for this order, sorted by bid amount (ascending) and then by estimated arrival time
+    const results = await db.select()
+      .from(driverBidsTable)
+      .where(eq(driverBidsTable.order_id, orderId))
+      .orderBy(
+        asc(driverBidsTable.bid_amount),
+        asc(driverBidsTable.estimated_arrival_minutes)
+      )
+      .execute();
+
+    // Convert numeric fields back to numbers before returning
+    return results.map(bid => ({
+      ...bid,
+      bid_amount: parseFloat(bid.bid_amount) // Convert string back to number
+    }));
+  } catch (error) {
+    console.error('Getting order bids failed:', error);
+    throw error;
+  }
 }

@@ -1,30 +1,35 @@
+import { db } from '../db';
+import { ordersTable } from '../db/schema';
 import { type Order } from '../schema';
+import { eq, desc } from 'drizzle-orm';
 
-export async function getUserOrders(userId: number, role: 'passenger' | 'driver'): Promise<Order[]> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is to get orders for a specific user:
-    // - For passengers: get orders where passenger_id = userId
-    // - For drivers: get orders where driver_id = userId
-    // - Include order details, status, and payment information
-    // - Sort by created_at desc to show recent orders first
-    return Promise.resolve([
-        {
-            id: 1,
-            passenger_id: role === 'passenger' ? userId : 1,
-            driver_id: role === 'driver' ? userId : 1,
-            pickup_latitude: -6.2088,
-            pickup_longitude: 106.8456,
-            pickup_address: 'Jakarta Central',
-            destination_latitude: -6.1751,
-            destination_longitude: 106.8650,
-            destination_address: 'Jakarta North',
-            estimated_fare: 25000,
-            final_fare: 25000,
-            status: 'completed',
-            payment_status: 'paid',
-            qris_payment_id: 'QRIS_123456',
-            created_at: new Date(),
-            updated_at: new Date()
-        }
-    ] as Order[]);
-}
+export const getUserOrders = async (userId: number, role: 'passenger' | 'driver'): Promise<Order[]> => {
+  try {
+    // Build query based on user role - use direct approach instead of conditional assignment
+    const results = role === 'passenger' 
+      ? await db.select()
+          .from(ordersTable)
+          .where(eq(ordersTable.passenger_id, userId))
+          .orderBy(desc(ordersTable.created_at))
+          .execute()
+      : await db.select()
+          .from(ordersTable)
+          .where(eq(ordersTable.driver_id, userId))
+          .orderBy(desc(ordersTable.created_at))
+          .execute();
+
+    // Convert numeric fields back to numbers before returning
+    return results.map(order => ({
+      ...order,
+      pickup_latitude: parseFloat(order.pickup_latitude),
+      pickup_longitude: parseFloat(order.pickup_longitude),
+      destination_latitude: parseFloat(order.destination_latitude),
+      destination_longitude: parseFloat(order.destination_longitude),
+      estimated_fare: parseFloat(order.estimated_fare),
+      final_fare: order.final_fare ? parseFloat(order.final_fare) : null
+    }));
+  } catch (error) {
+    console.error('Get user orders failed:', error);
+    throw error;
+  }
+};

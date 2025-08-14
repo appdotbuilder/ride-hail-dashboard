@@ -1,30 +1,71 @@
+import { db } from '../db';
+import { ordersTable } from '../db/schema';
 import { type ProcessQrisPaymentInput, type Order } from '../schema';
+import { eq, and } from 'drizzle-orm';
 
-export async function processQrisPayment(input: ProcessQrisPaymentInput): Promise<Order> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is to process QRIS payment for an order:
-    // - Validate passenger owns the order and amount matches
-    // - Integrate with QRIS payment gateway (e.g., DANA, GoPay, OVO)
-    // - Generate QR code for payment
-    // - Update payment status based on gateway response
-    // - Store payment transaction ID
-    // - Handle payment confirmation callbacks
-    return Promise.resolve({
-        id: input.order_id,
-        passenger_id: input.passenger_id,
-        driver_id: 0, // Placeholder
-        pickup_latitude: 0,
-        pickup_longitude: 0,
-        pickup_address: 'placeholder',
-        destination_latitude: 0,
-        destination_longitude: 0,
-        destination_address: 'placeholder',
-        estimated_fare: input.amount,
-        final_fare: input.amount,
-        status: 'completed',
+export const processQrisPayment = async (input: ProcessQrisPaymentInput): Promise<Order> => {
+  try {
+    // First, validate that the order exists and belongs to the passenger
+    const existingOrders = await db.select()
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.id, input.order_id),
+          eq(ordersTable.passenger_id, input.passenger_id)
+        )
+      )
+      .execute();
+
+    if (existingOrders.length === 0) {
+      throw new Error('Order not found or does not belong to passenger');
+    }
+
+    const order = existingOrders[0];
+
+    // Validate order status - can only pay for accepted/in_progress orders
+    if (order.status !== 'accepted' && order.status !== 'in_progress' && order.status !== 'completed') {
+      throw new Error('Order is not in a payable state');
+    }
+
+    // Validate payment hasn't already been processed
+    if (order.payment_status === 'paid') {
+      throw new Error('Order has already been paid');
+    }
+
+    // Validate amount matches the fare (use final_fare if available, otherwise estimated_fare)
+    const expectedAmount = order.final_fare ? parseFloat(order.final_fare) : parseFloat(order.estimated_fare);
+    if (Math.abs(input.amount - expectedAmount) > 0.01) { // Allow small floating point differences
+      throw new Error('Payment amount does not match order fare');
+    }
+
+    // Generate mock QRIS payment ID (in real implementation, this would come from payment gateway)
+    const qrisPaymentId = `QRIS_${Date.now()}_${input.order_id}`;
+
+    // Update order with payment information
+    const updatedOrders = await db.update(ordersTable)
+      .set({
         payment_status: 'paid',
-        qris_payment_id: 'QRIS_' + Date.now().toString(), // Mock payment ID
-        created_at: new Date(),
+        qris_payment_id: qrisPaymentId,
         updated_at: new Date()
-    } as Order);
-}
+      })
+      .where(eq(ordersTable.id, input.order_id))
+      .returning()
+      .execute();
+
+    const updatedOrder = updatedOrders[0];
+
+    // Convert numeric fields back to numbers for return
+    return {
+      ...updatedOrder,
+      pickup_latitude: parseFloat(updatedOrder.pickup_latitude),
+      pickup_longitude: parseFloat(updatedOrder.pickup_longitude),
+      destination_latitude: parseFloat(updatedOrder.destination_latitude),
+      destination_longitude: parseFloat(updatedOrder.destination_longitude),
+      estimated_fare: parseFloat(updatedOrder.estimated_fare),
+      final_fare: updatedOrder.final_fare ? parseFloat(updatedOrder.final_fare) : null
+    };
+  } catch (error) {
+    console.error('QRIS payment processing failed:', error);
+    throw error;
+  }
+};
